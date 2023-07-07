@@ -2,7 +2,9 @@
 Data-driven method to learn the optimal polynomial chaos expansion on the optimal low-dimensional space
 
 To use the code, please cite the following paper:
+
 Zeng, Xiaoshu, and Roger Ghanem. "Projection pursuit adaptation on polynomial chaos expansions." Computer Methods in Applied Mechanics and Engineering 405 (2023): 115845.
+
 
 Some of the parameters that are specific to the problem at hand are as follows:
 
