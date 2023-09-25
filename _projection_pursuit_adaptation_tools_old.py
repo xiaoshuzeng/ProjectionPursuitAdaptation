@@ -8,9 +8,8 @@ import math
 import time
 from scipy import special
 from scipy.linalg import lstsq
-# from sklearn.linear_model import RidgeCV
+from sklearn.linear_model import RidgeCV
 from scipy import stats
-from functools import reduce
 
 
 class BasisAdapt:
@@ -234,8 +233,8 @@ class ActiveSubspace:
 class ProjectionPursuitAdaptation:
 
     def __init__(self, tol_pce=2e-2, PPA_method=1, PPA_dim=None, recover_run=False, ndim_iteration=None, list_vec_a=None, mat_A_new=None, list_c_k=None, list_pce_evals=None, main_verbose=True, name='Projection Pursuit Adaptation'):
-        tol_pce_coeffs = 5e-2
-        tol_adapt_dire = 5e-2
+        tol_pce_coeffs = 2.5e-2
+        tol_adapt_dire = 2.5e-2
         self._name = name
         self._tol_c_k = tol_pce_coeffs
         self._tol_vec_a = tol_adapt_dire
@@ -269,7 +268,7 @@ class ProjectionPursuitAdaptation:
         N_data = xi.shape[0]
         ndim = xi.shape[1]
         psi_xi = PolyBasis(ndim, 1, pc_type)(xi)
-        c_k0, _, _, _ = lstsq(psi_xi, Q_evals, lapack_driver='gelsy')
+        c_k0, _, _, _ = lstsq(psi_xi, Q_evals)
         gauss_rotation = BasisAdapt().gauss_adaptation(c_k0[1:], 1, ndim, method=1)
 
         list_vec_a = []             # list of the projections
@@ -301,40 +300,40 @@ class ProjectionPursuitAdaptation:
                 eta = np.dot(vec_a, xi.T)
                 eta = np.reshape(eta, (eta.size, 1))
                 psi_eta = PolyBasis(1, nord, pc_type)(eta)
-                c_k, _, _, _ = lstsq(psi_eta, Q_evals, lapack_driver='gelsy') if ndim_iteration == 1 else lstsq(
-                    psi_eta, Q_evals - list_pce_evals[ndim_iteration-2], lapack_driver='gelsy')
+                c_k, _, _, _ = lstsq(psi_eta, Q_evals) if ndim_iteration == 1 else lstsq(
+                    psi_eta, Q_evals - list_pce_evals[ndim_iteration-2])
                 pce_evals = np.dot(psi_eta, c_k)
 
                 # Iteration to compute the current projections
                 k = 1
                 while True:
                     if self._main_verbose:
-                        print('Current iteration is %d' % k)
+                        if k % 10 == 0:
+                            print('Current iteration is %d' % k)
                     # Start to search adapted directions from the firsr-order coefficients
                     grad_psi_eta = GradientPolyBasis(1, nord, pc_type)(eta)
                     grad_pce = np.array([np.dot(c_k, grad_psi_eta[i]) for i in range(N_data)])
                     b_hat = (eta[:, 0] + (Q_evals-pce_evals)/grad_pce[:, 0]) if ndim_iteration == 1 else (
                         eta[:, 0] + (Q_evals-list_pce_evals[ndim_iteration-2]-pce_evals)/grad_pce[:, 0])
                     w = grad_pce[:, 0]**2
-                    # W = np.diag(w)
+                    W = np.diag(w)
                     # vec_a_new = weighted_least_squares(xi, W, b_hat)
-                    vec_a_new, _, _, _ = lstsq((np.sqrt(w)*xi.T).T, np.sqrt(w)*b_hat, lapack_driver='gelsy')
+                    vec_a_new, _, _, _ = lstsq((np.sqrt(w)*xi.T).T, np.sqrt(w)*b_hat)
                     vec_a_new = vec_a_new/np.linalg.norm(vec_a_new)
 
                     # update the PCE model with new projection
                     eta = np.dot(vec_a_new, xi.T)
                     eta = np.reshape(eta, (eta.size, 1))
                     psi_eta = PolyBasis(1, nord, pc_type)(eta)
-                    c_k_new, _, _, _ = lstsq(psi_eta, Q_evals, lapack_driver='gelsy') if ndim_iteration == 1 else lstsq(
-                        psi_eta, Q_evals-list_pce_evals[ndim_iteration-2], lapack_driver='gelsy')
+                    c_k_new, _, _, _ = lstsq(psi_eta, Q_evals) if ndim_iteration == 1 else lstsq(
+                        psi_eta, Q_evals-list_pce_evals[ndim_iteration-2])
                     pce_evals_new = np.dot(psi_eta, c_k_new)
 
                     # stopping criterion check
                     err_vec_a = np.linalg.norm(vec_a_new - vec_a)/np.linalg.norm(vec_a)
                     err_c_k = np.linalg.norm(c_k_new[1:] - c_k[1:])/np.linalg.norm(c_k[1:])
                     num_stop_it = 40
-                    # if (err_vec_a < self._tol_vec_a) and (err_c_k < self._tol_c_k):
-                    if (err_vec_a < self._tol_vec_a):
+                    if (err_vec_a < self._tol_vec_a) and (err_c_k < self._tol_c_k):
                         break
                     elif k > num_stop_it:
                         if self._main_verbose:
@@ -371,34 +370,37 @@ class ProjectionPursuitAdaptation:
 
         elif self._PPA_method == 1:
             while True:
-                tic_tot = time.time()
                 if self._main_verbose:
                     print('\nPerforming %d-d PP-adaptation ...' % ndim_iteration)
                 assert pc_type in [
                     'HG'], 'Only Hermite polynomials are currently supported! Please choose ' + str(['HG']) + '!'
+                # mat_A = gauss_rotation[:ndim_iteration, :]
                 vec_a = gauss_rotation[ndim_iteration-1, :]
                 mat_A = np.reshape(
                     vec_a, (1, ndim)) if ndim_iteration == 1 else np.vstack((mat_A, vec_a))
                 eta = np.dot(mat_A, xi.T).T
-                psi_eta, psi_eta_minus_last = PolyBasisLast(ndim_iteration, nord, pc_type)(eta)
+                psi_eta = PolyBasis(ndim_iteration, nord, pc_type)(eta)
 
-                # clfCV = RidgeCV(alphas=[1e-2, 1e-1, 1], fit_intercept=False)
-                # clfCV.fit(psi_eta, Q_evals)
-                # c_k = clfCV.coef_
-                c_k, _, _, _ = lstsq(psi_eta, Q_evals, lapack_driver='gelsy')
+                # c_k, _, _, _ = lstsq(psi_eta, Q_evals)
+                clfCV = RidgeCV(alphas=[1e-2, 1e-1, 1, 10], fit_intercept=False)
+                clfCV.fit(psi_eta, Q_evals)
+                c_k = clfCV.coef_
 
                 pce_evals = np.dot(psi_eta, c_k)
 
                 k = 1
                 while True:
                     if self._main_verbose:
-                        print('Current iteration is %d' % k)
+                        if k % 10 == 0:
+                            print('Current iteration is %d' % k)
                     # Start to search adapted directions from the firsr-order coefficients
-                    grad_pce, psi_eta_minus_last = GradientPolyBasisLast(
-                        ndim_iteration, nord, pc_type).compute_PCE_grad_update_last(eta, c_k, psi_eta_minus_last)
+                    grad_psi_eta = GradientPolyBasis(ndim_iteration, nord, pc_type)(eta)
+                    grad_pce = np.array([np.dot(c_k, grad_psi_eta[i]) for i in range(N_data)])
                     b_hat = eta[:, -1] + (Q_evals-pce_evals)/grad_pce[:, -1]
                     w = grad_pce[:, -1]**2
-                    vec_a_new, _, _, _ = lstsq((np.sqrt(w)*xi.T).T, np.sqrt(w)*b_hat, lapack_driver='gelsy')
+                    W = np.diag(w)
+                    # vec_a_new = weighted_least_squares(xi, W, b_hat)
+                    vec_a_new, _, _, _ = lstsq((np.sqrt(w)*xi.T).T, np.sqrt(w)*b_hat)
                     mat_A_new = np.copy(mat_A)
                     mat_A_new[-1, :] = vec_a_new
                     [q, r] = np.linalg.qr(mat_A_new.T)
@@ -409,22 +411,20 @@ class ProjectionPursuitAdaptation:
                     mat_A_new = q
 
                     eta = np.dot(mat_A_new, xi.T).T
-                    psi_eta, psi_eta_minus_last = PolyBasisLast(
-                        ndim_iteration, nord, pc_type).update_last(eta, psi_eta_minus_last)
+                    psi_eta = PolyBasis(ndim_iteration, nord, pc_type)(eta)
                     # update the PCE model with new projection (we can use ridge regression
                     # to reduce overfitting)
-                    # clfCV = RidgeCV(alphas=[1e-2, 1e-1, 1], fit_intercept=False)
-                    # clfCV.fit(psi_eta, Q_evals)
-                    # c_k_new = clfCV.coef_
-                    c_k_new, _, _, _ = lstsq(psi_eta, Q_evals, lapack_driver='gelsy')
+                    # c_k_new, _, _, _ = lstsq(psi_eta, Q_evals)
+                    clfCV = RidgeCV(alphas=[1e-2, 1e-1, 1, 10], fit_intercept=False)
+                    clfCV.fit(psi_eta, Q_evals)
+                    c_k_new = clfCV.coef_
 
                     pce_evals_new = np.dot(psi_eta, c_k_new)
 
                     err_vec_a = np.linalg.norm(vec_a_new - vec_a)/np.linalg.norm(vec_a)
                     err_c_k = np.linalg.norm(c_k_new[1:] - c_k[1:])/np.linalg.norm(c_k[1:])
                     num_stop_it = 40
-                    # if (err_vec_a < self._tol_vec_a) and (err_c_k < self._tol_c_k):
-                    if (err_vec_a < self._tol_vec_a):
+                    if (err_vec_a < self._tol_vec_a) and (err_c_k < self._tol_c_k):
                         break
                     elif k > num_stop_it:
                         if self._main_verbose:
@@ -441,8 +441,6 @@ class ProjectionPursuitAdaptation:
                 list_vec_a.append(vec_a_new)
                 list_pce_evals.append(pce_evals)
                 list_c_k.append(c_k_new)
-                print('Time elapsed for %dd PPA: %.2f seconds' % (ndim_iteration, time.time()-tic_tot))
-
                 if self._PPA_dim is not None:
                     if (ndim_iteration > 1):
                         err_pce = np.linalg.norm(
@@ -505,16 +503,20 @@ class Hermite1d:
         """
         self._nord = nord
 
+    def eval(self, x):
+        H = np.zeros(self._nord + 1)
+        H[0], H[1] = 1.0, x
+        for i in range(2, H.shape[0]):
+            H[i] = (x * H[i-1] - (i-1) * H[i-2])
+        # normalization
+        H = H / [math.sqrt(math.factorial(i)) for i in range(H.shape[0])]
+        return H
+
     def __call__(self, x):
         N = x.shape[0]
         H = np.zeros((N, self._nord + 1))
-        H[:, 0], H[:, 1] = np.ones(N), x
-        for i in range(2, H.shape[1]):
-            H[:, i] = (x * H[:, i-1] - (i-1) * H[:, i-2])
-        # normalization
-        factor = np.array([math.sqrt(math.factorial(i)) for i in range(H.shape[1])])
-        H = H/factor
-        # H = H / [math.sqrt(math.factorial(i)) for i in range(H.shape[0])]
+        for i in range(N):
+            H[i, :] = self.eval(x[i])
         return H
 
 
@@ -530,12 +532,20 @@ class Legendre1d:
         """
         self._nord = nord
 
+    def eval(self, x):
+        H = np.zeros(self._nord + 1)
+        H[0], H[1] = 1.0, x
+        for i in range(2, H.shape[0]):
+            H[i] = ((2*i-1) * x * H[i-1] - (i-1) * H[i-2]) / i
+        # H = H / [math.sqrt(2 / (2*i+1))
+        #          for i in range(H.shape[0])]  # normalized
+        return H
+
     def __call__(self, x):
         N = x.shape[0]
         H = np.zeros((N, self._nord + 1))
-        H[:, 0], H[:, 1] = np.ones(N), x
-        for i in range(2, H.shape[1]):
-            H[:, i] = ((2*i-1) * x * H[:, i-1] - (i-1) * H[:, i-2]) / i
+        for i in range(N):
+            H[i, :] = self.eval(x[i])
         return H
 
 
@@ -562,100 +572,21 @@ class PolyBasis:
         assert xi.shape[1] == self._ndim
 
         if self._type == 'HG':
-            H = [Hermite1d(nord=self._nord)(xi[:, i])[:, self._MI_terms[:, i]] for i in range(self._ndim)]
-            psi_xi = reduce(np.multiply, H)
+            H = [Hermite1d(nord=self._nord)(xi[:, i]) for i in range(self._ndim)]
+            psi_xi = np.ones((xi.shape[0], self._MI_terms.shape[0]))
+            for i in range(self._MI_terms.shape[0]):
+                for j in range(self._ndim):
+                    psi_xi[:, i] *= H[j][:, self._MI_terms[i, j]]
 
         elif self._type == 'LU':
-            H = [Legendre1d(nord=self._nord)(xi[:, i])[:, self._MI_terms[:, i]] for i in range(self._ndim)]
-            psi_xi = reduce(np.multiply, H)
+            H = [Legendre1d(nord=self._nord)(xi[:, i])
+                 for i in range(self._ndim)]
+            psi_xi = np.ones((xi.shape[0], self._MI_terms.shape[0]))
+            for i in range(self._MI_terms.shape[0]):
+                for j in range(self._ndim):
+                    psi_xi[:, i] *= H[j][:, self._MI_terms[i, j]]
 
         return psi_xi
-
-    def mi_terms(self, ndim, nord):
-        """
-        Multiindex matrix
-
-        ndim: integer
-
-        nord: PCE order
-        """
-        q_num = [int(special.comb(ndim+i-1, i)) for i in range(nord+1)]
-        mul_ind = np.array(np.zeros(ndim, dtype=int), dtype=int)
-        mul_ind = np.vstack([mul_ind, np.eye(ndim, dtype=int)])
-        I = np.eye(ndim, dtype=int)
-        ind = [1] * ndim
-        for j in range(1, nord):
-            ind_new = []
-            for i in range(ndim):
-                a0 = np.copy(I[int(np.sum(ind[:i])):, :])
-                a0[:, i] += 1
-                mul_ind = np.vstack([mul_ind, a0])
-                ind_new += [a0.shape[0]]
-            ind = ind_new
-            I = np.copy(mul_ind[np.sum(q_num[:j+1]):, :])
-        return mul_ind
-
-    def mi_terms_loc(self, d1, d2, nord):
-        """
-        Locate basis terms in Multi-index matrix
-        """
-        assert d1 < d2
-        MI2 = self.mi_terms(d2, nord)
-        if d2 == d1 + 1:
-            return np.where(MI2[:, -1] == 0)[0]
-        else:
-            TFs = (MI2[:, d1:] == [0]*(d2-d1))
-            locs = []
-            for i in range(TFs.shape[0]):
-                if TFs[i, :].all():
-                    locs.append(i)
-            return locs
-
-
-class PolyBasisLast:
-    """
-    Construct PCE basis terms to with the capability update only terms wrt the last variable
-    """
-    _nord = None
-    _ndim = None
-    _MI_terms = None
-    _type = None
-
-    def __init__(self, ndim=1, nord=1, pol_type='HG'):
-
-        # Ininializes the object
-        assert pol_type in [
-            'HG', 'LU'], 'Only Hermite and Legendre polynomials are currently supported! Please choose among ' + str(['HG', 'LU']) + '!'
-        self._nord = nord
-        self._ndim = ndim
-        self._MI_terms = self.mi_terms(self._ndim, self._nord)
-        self._type = pol_type
-
-    def __call__(self, xi):
-        assert xi.shape[1] == self._ndim
-
-        if self._type == 'HG':
-            H = [Hermite1d(nord=self._nord)(xi[:, i])[:, self._MI_terms[:, i]] for i in range(self._ndim)]
-            psi_xi = reduce(np.multiply, H)
-
-        elif self._type == 'LU':
-            H = [Legendre1d(nord=self._nord)(xi[:, i])[:, self._MI_terms[:, i]] for i in range(self._ndim)]
-            psi_xi = reduce(np.multiply, H)
-
-        return psi_xi, psi_xi/H[-1]
-
-    def update_last(self, xi, psi_minus_last):
-        assert xi.shape[1] == self._ndim
-
-        if self._type == 'HG':
-            H = Hermite1d(nord=self._nord)(xi[:, self._ndim-1])[:, self._MI_terms[:, self._ndim-1]]
-            psi_xi = psi_minus_last*H
-
-        elif self._type == 'LU':
-            H = Legendre1d(nord=self._nord)(xi[:, self._ndim-1])[:, self._MI_terms[:, self._ndim-1]]
-            psi_xi = psi_minus_last*H
-
-        return psi_xi, psi_minus_last
 
     def mi_terms(self, ndim, nord):
         """
@@ -714,153 +645,58 @@ class GradientPolyBasis:
             'HG', 'LU'], 'Gradient option support only Hermite and Legendre polynomials! Please choose ' + str(['HG', 'LU']) + '!'
         self._nord = nord
         self._ndim = ndim
-        self._PB = PolyBasis(self._ndim, self._nord)
-        self._MI_terms = self._PB.mi_terms(self._ndim, self._nord)
+        self._MI_terms = PolyBasis(self._ndim, self._nord).mi_terms(self._ndim, self._nord)
         self._type = pol_type
 
     def __call__(self, xi):
         assert xi.shape[1] == self._ndim
 
         if self._type == 'HG':
-            H = [Hermite1d(nord=self._nord)(xi[:, i])[:, self._PB._MI_terms[:, i]] for i in range(self._ndim)]
-            psi_xi = reduce(np.multiply, H)
-            grad_psi_xi = [psi_xi/H[k] *
-                           self.derivative_1d_Hermite(xi[:, k])[:, self._PB._MI_terms[:, k]] for k in range(self._ndim)]
-            grad_psi_xi = np.array(grad_psi_xi)
-            grad_psi_xi = np.swapaxes(grad_psi_xi, 0, 2)
-            grad_psi_xi = np.swapaxes(grad_psi_xi, 0, 1)
+            PB = PolyBasis(self._ndim, self._nord)
+            npce = PB._MI_terms.shape[0]
+            H = [Hermite1d(nord=self._nord)(xi[:, i]) for i in range(self._ndim)]
+            grad_psi_xi = np.ones((xi.shape[0], npce, self._ndim))
+            # grad_psi_xi2 = np.ones((xi.shape[0], npce, self._ndim))
+            psi_xi = np.ones((xi.shape[0], npce))
+            for i in range(npce):
+                for j in range(self._ndim):
+                    psi_xi[:, i] *= H[j][:, PB._MI_terms[i, j]]
+                # for k in range(self._ndim):
+                #     eval_1d_deriv = self.derivative_1d_Hermite(xi[:, k])[:, PB._MI_terms[i, k]]
+                #     grad_psi_xi[:, i, k] = psi_xi[:, i]/H[k][:, PB._MI_terms[i, k]] * eval_1d_deriv
+            for k in range(self._ndim):
+                grad_psi_xi[:, :, k] = psi_xi/H[k][:, PB._MI_terms[:, k]] * \
+                    self.derivative_1d_Hermite(xi[:, k])[:, PB._MI_terms[:, k]]
         elif self._type == 'LU':
-            H = [Legendre1d(nord=self._nord)(xi[:, i])[:, self._PB._MI_terms[:, i]] for i in range(self._ndim)]
-            psi_xi = reduce(np.multiply, H)
-            grad_psi_xi = [psi_xi/H[k] *
-                           self.derivative_1d_Legendre(xi[:, k])[:, self._PB._MI_terms[:, k]] for k in range(self._ndim)]
-            grad_psi_xi = np.array(grad_psi_xi)
-            grad_psi_xi = np.swapaxes(grad_psi_xi, 0, 2)
-            grad_psi_xi = np.swapaxes(grad_psi_xi, 0, 1)
+            PB = PolyBasis(self._ndim, self._nord)
+            npce = PB._MI_terms.shape[0]
+            L = [Legendre1d(nord=self._nord)(xi[:, i]) for i in range(self._ndim)]
+            grad_psi_xi = np.ones((xi.shape[0], npce, self._ndim))
+            psi_xi = np.ones((xi.shape[0], npce))
+            for i in range(npce):
+                for j in range(self._ndim):
+                    psi_xi[:, i] *= L[j][:, PB._MI_terms[i, j]]
+                # for k in range(self._ndim):
+                #     eval_1d_deriv = self.derivative_1d_Legendre(xi[:, k])[:, PB._MI_terms[i, k]]
+                #     grad_psi_xi[:, i, k] = psi_xi[:, i]/L[k][:, PB._MI_terms[i, k]] * eval_1d_deriv
+            for k in range(self._ndim):
+                grad_psi_xi[:, :, k] = psi_xi/L[k][:, PB._MI_terms[:, k]] * \
+                    self.derivative_1d_Legendre(xi[:, k])[:, PB._MI_terms[:, k]]
 
         return grad_psi_xi
 
     def derivative_1d_Hermite(self, x):
-        # x = np.reshape(x, (x.size, 1))
+        x = np.reshape(x, (x.size, 1))
+        dH = np.zeros((x.shape[0], self._nord + 1))
         H = Hermite1d(self._nord)(x)
-        dH = [i*H[:, i-1]*np.sqrt(math.factorial(i-1))/np.sqrt(math.factorial(i)) for i in range(1, self._nord + 1)]
-        dH.insert(0, np.zeros(x.shape[0]))
-        dH = np.array(dH)
-        dH = np.swapaxes(dH, 0, 1)
-        # dH = np.zeros((x.shape[0], self._nord + 1))
-        # for i in range(1, dH.shape[1]):
-        #     dH[:, i] = i*H[:, i-1]
-        #     # normalization
-        #     dH[:, i] = dH[:, i]*np.sqrt(math.factorial(i-1))/np.sqrt(math.factorial(i))
+        for i in range(1, dH.shape[1]):
+            dH[:, i] = i*H[:, i-1]
+            # normalization
+            dH[:, i] = dH[:, i]*np.sqrt(math.factorial(i-1))/np.sqrt(math.factorial(i))
         return dH
 
     def derivative_1d_Legendre(self, x):
-        # x = np.reshape(x, (x.size, 1))
-        dL = np.zeros((x.shape[0], self._nord + 1))
-        L = Legendre1d(self._nord)(x)
-        for i in range(1, dL.shape[1]):
-            dL[:, i] = (x[:, 0]*L[:, i]-L[:, i-1])*i/(x[:, 0]**2-1)
-        return dL
-
-
-class GradientPolyBasisLast:
-    """
-    Compute gradient of PCE basis terms with the capability to update only terms wrt the last variable
-    """
-    _nord = None
-    _ndim = None
-    _MI_terms = None
-    _type = None
-
-    def __init__(self, ndim=1, nord=1, pol_type='HG'):
-
-        # Ininializes the object
-        assert pol_type in [
-            'HG', 'LU'], 'Gradient option support only Hermite and Legendre polynomials! Please choose ' + str(['HG', 'LU']) + '!'
-        self._nord = nord
-        self._ndim = ndim
-        self._PB = PolyBasis(self._ndim, self._nord)
-        self._MI_terms = self._PB.mi_terms(self._ndim, self._nord)
-        self._type = pol_type
-
-    def __call__(self, xi):
-        assert xi.shape[1] == self._ndim
-
-        if self._type == 'HG':
-            H = [Hermite1d(nord=self._nord)(xi[:, i])[:, self._PB._MI_terms[:, i]] for i in range(self._ndim)]
-            psi_xi = reduce(np.multiply, H)
-            grad_psi_xi = [psi_xi/H[k] *
-                           self.derivative_1d_Hermite(xi[:, k])[:, self._PB._MI_terms[:, k]] for k in range(self._ndim)]
-            grad_psi_xi = np.array(grad_psi_xi)
-            grad_psi_xi = np.swapaxes(grad_psi_xi, 0, 2)
-            grad_psi_xi = np.swapaxes(grad_psi_xi, 0, 1)
-        elif self._type == 'LU':
-            H = [Legendre1d(nord=self._nord)(xi[:, i])[:, self._PB._MI_terms[:, i]] for i in range(self._ndim)]
-            psi_xi = reduce(np.multiply, H)
-            grad_psi_xi = [psi_xi/H[k] *
-                           self.derivative_1d_Legendre(xi[:, k])[:, self._PB._MI_terms[:, k]] for k in range(self._ndim)]
-            grad_psi_xi = np.array(grad_psi_xi)
-            grad_psi_xi = np.swapaxes(grad_psi_xi, 0, 2)
-            grad_psi_xi = np.swapaxes(grad_psi_xi, 0, 1)
-
-        return grad_psi_xi, psi_xi/H[-1]
-
-    def update_last(self, xi, psi_minus_last):
-        assert xi.shape[1] == self._ndim
-
-        if self._type == 'HG':
-            H = [Hermite1d(nord=self._nord)(xi[:, i])[:, self._PB._MI_terms[:, i]] for i in range(self._ndim)]
-            psi_xi = psi_minus_last*H[-1]
-            grad_psi_xi = [psi_xi/H[k] *
-                           self.derivative_1d_Hermite(xi[:, k])[:, self._PB._MI_terms[:, k]] for k in range(self._ndim)]
-            grad_psi_xi = np.swapaxes(grad_psi_xi, 0, 2)
-            grad_psi_xi = np.swapaxes(grad_psi_xi, 0, 1)
-        elif self._type == 'LU':
-            H = [Legendre1d(nord=self._nord)(xi[:, i])[:, self._PB._MI_terms[:, i]] for i in range(self._ndim)]
-            psi_xi = psi_minus_last*H[-1]
-            grad_psi_xi = [psi_xi/H[k] *
-                           self.derivative_1d_Legendre(xi[:, k])[:, self._PB._MI_terms[:, k]] for k in range(self._ndim)]
-            grad_psi_xi = np.array(grad_psi_xi)
-            grad_psi_xi = np.swapaxes(grad_psi_xi, 0, 2)
-            grad_psi_xi = np.swapaxes(grad_psi_xi, 0, 1)
-
-        return grad_psi_xi, psi_minus_last
-
-    def compute_PCE_grad_update_last(self, xi, c_k, psi_minus_last):
-        assert xi.shape[1] == self._ndim
-
-        if self._type == 'HG':
-            H = [Hermite1d(nord=self._nord)(xi[:, i])[:, self._PB._MI_terms[:, i]] for i in range(self._ndim)]
-            psi_xi = psi_minus_last*H[-1]
-            grad_pce = [np.dot(c_k, (psi_xi/H[k] * self.derivative_1d_Hermite(xi[:, k])
-                                     [:, self._PB._MI_terms[:, k]]).T) for k in range(self._ndim)]
-            grad_pce = np.array(grad_pce)
-            grad_pce = np.swapaxes(grad_pce, 0, 1)
-        elif self._type == 'LU':
-            H = [Legendre1d(nord=self._nord)(xi[:, i])[:, self._PB._MI_terms[:, i]] for i in range(self._ndim)]
-            psi_xi = psi_minus_last*H[-1]
-            grad_pce = [np.dot(c_k, (psi_xi/H[k] * self.derivative_1d_Legendre(xi[:, k])
-                                     [:, self._PB._MI_terms[:, k]]).T) for k in range(self._ndim)]
-            grad_pce = np.swapaxes(grad_pce, 0, 1)
-
-        return grad_pce, psi_minus_last
-
-    def derivative_1d_Hermite(self, x):
-        # x = np.reshape(x, (x.size, 1))
-        H = Hermite1d(self._nord)(x)
-        dH = [i*H[:, i-1]*np.sqrt(math.factorial(i-1))/np.sqrt(math.factorial(i)) for i in range(1, self._nord + 1)]
-        dH.insert(0, np.zeros(x.shape[0]))
-        dH = np.array(dH)
-        dH = np.swapaxes(dH, 0, 1)
-        # dH = np.zeros((x.shape[0], self._nord + 1))
-        # for i in range(1, dH.shape[1]):
-        #     dH[:, i] = i*H[:, i-1]
-        #     # normalization
-        #     dH[:, i] = dH[:, i]*np.sqrt(math.factorial(i-1))/np.sqrt(math.factorial(i))
-        return dH
-
-    def derivative_1d_Legendre(self, x):
-        # x = np.reshape(x, (x.size, 1))
+        x = np.reshape(x, (x.size, 1))
         dL = np.zeros((x.shape[0], self._nord + 1))
         L = Legendre1d(self._nord)(x)
         for i in range(1, dL.shape[1]):

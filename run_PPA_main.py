@@ -26,12 +26,12 @@ nord = 3   # order of PCE. This parameter is application dependent
 ndim = 7   # dimension
 pc_type = "HG"  # Polynomial type
 n_MC = 100000   # #of MC samples of generate KDE of the PDF
-PPA_method = 1  # defaut is 1, which uses PPA method
 
 # %%
 #####################
 # load training data
 #####################
+# the input must be Gaussian. If not, please transform to Gaussian first
 training = np.loadtxt('training.txt')
 xi = training[:, :-1]
 Q_evals = training[:, -1]
@@ -53,9 +53,20 @@ PPA_dim = None
 # If not None, then use the specified dimension for adaptation.
 # If None, then find the optimal adapted dimension based on tol_pce
 
-PPA_model = ProjectionPursuitAdaptation(tol_pce, PPA_method=PPA_method, PPA_dim=PPA_dim, main_verbose=main_verbose)
-PPA_model.projection_pursuit_adaptation(nord, pc_type, xi, Q_evals)
-ppa_dim, mat_A_new, list_c_k = PPA_model._ndim_iteration, PPA_model._mat_A_new, PPA_model._list_c_k
+PPA_method = 1  # defaut is 1, which uses PPA method
+recover_run = True
+if not recover_run:
+    # fresh run starting from dimension 1
+    PPA_model = ProjectionPursuitAdaptation(tol_pce, PPA_method=PPA_method, PPA_dim=PPA_dim, main_verbose=main_verbose)
+    PPA_model.projection_pursuit_adaptation(nord, pc_type, xi, Q_evals)
+    ppa_dim, list_vec_a, mat_A_new, list_c_k, list_pce_evals = PPA_model._ndim_iteration, PPA_model._list_vec_a, PPA_model._mat_A_new, PPA_model._list_c_k, PPA_model._list_pce_evals
+else:
+    # recover run with given starting dimension
+    PPA_dim = 5
+    PPA_model = ProjectionPursuitAdaptation(tol_pce, PPA_method=PPA_method, PPA_dim=PPA_dim, recover_run=True, ndim_iteration=ppa_dim,
+                                            list_vec_a=list_vec_a, mat_A_new=mat_A_new, list_c_k=list_c_k, list_pce_evals=list_pce_evals, main_verbose=main_verbose)
+    PPA_model.projection_pursuit_adaptation(nord, pc_type, xi, Q_evals)
+    ppa_dim, list_vec_a, mat_A_new, list_c_k, list_pce_evals = PPA_model._ndim_iteration, PPA_model._list_vec_a, PPA_model._mat_A_new, PPA_model._list_c_k, PPA_model._list_pce_evals
 
 
 # %%
