@@ -562,11 +562,11 @@ class PolyBasis:
         assert xi.shape[1] == self._ndim
 
         if self._type == 'HG':
-            H = [Hermite1d(nord=self._nord)(xi[:, i])[:, self._MI_terms[:, i]] for i in range(self._ndim)]
+            H = (Hermite1d(nord=self._nord)(xi[:, i])[:, self._MI_terms[:, i]] for i in range(self._ndim))
             psi_xi = reduce(np.multiply, H)
 
         elif self._type == 'LU':
-            H = [Legendre1d(nord=self._nord)(xi[:, i])[:, self._MI_terms[:, i]] for i in range(self._ndim)]
+            H = (Legendre1d(nord=self._nord)(xi[:, i])[:, self._MI_terms[:, i]] for i in range(self._ndim))
             psi_xi = reduce(np.multiply, H)
 
         return psi_xi
